@@ -15,15 +15,34 @@
 #include "imgui_impl_sdlrenderer3.h"
 #include <stdio.h>
 #include <SDL3/SDL.h>
+#include <thread>
+#include <vector>
 
 #include "bh_sim_utils.h"
 #include "math.h"
 
-#define PI 3.14159265358979323846
+std::thread sim_worker;
 
-#ifdef __EMSCRIPTEN__
-#include "../libs/emscripten/emscripten_mainloop_stub.h"
-#endif
+void render_points(SDL_Renderer* renderer, Body* simulation_result[10000], int* last_ren, int* last_done) {
+
+    printf("%d %d \n", *last_done/60, *last_ren/60);
+    if(*last_done > *last_ren) {
+        (*last_ren)++;
+    }
+
+    SDL_FPoint pts[N];
+    Body bodies_copy[N];
+
+    memcpy(bodies_copy, simulation_result[*last_ren], sizeof(bodies_copy));
+
+    for(int i=0;i<N;i++) {
+        pts[i].x = bodies_copy[i].pos.x+WIDTH/2;
+        pts[i].y = bodies_copy[i].pos.y+HEIGTH/2;
+    }
+
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255); /* white points */
+    SDL_RenderPoints(renderer, pts, N);
+}
 
 // Main code
 int main(int, char**)
@@ -39,8 +58,7 @@ int main(int, char**)
     // Create window with SDL_Renderer graphics context
     float main_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
     SDL_WindowFlags window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-    constexpr int WIDTH = 1280;
-    constexpr int HEIGTH = 720;
+
     SDL_Window* window = SDL_CreateWindow("N-Body gravitational simulation", (int)(WIDTH * main_scale), (int)(HEIGTH * main_scale), window_flags);
     if (window == nullptr)
     {
@@ -77,68 +95,48 @@ int main(int, char**)
     ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer3_Init(renderer);
 
-    // Load Fonts
-    // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
-    // - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
-    // - If the file cannot be loaded, the function will return a nullptr. Please handle those errors in your application (e.g. use an assertion, or display an error and quit).
-    // - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use Freetype for higher quality font rendering.
-    // - Read 'docs/FONTS.md' for more instructions and details.
-    // - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double backslash \\ !
-    // - Our Emscripten build process allows embedding fonts to be accessible at runtime from the "fonts/" folder. See Makefile.emscripten for details.
-    //style.FontSizeBase = 20.0f;
-    //io.Fonts->AddFontDefault();
-    //io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf");
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf");
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf");
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf");
-    //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf");
-    //IM_ASSERT(font != nullptr);
+    ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.0f, 1.00f); // ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
-    // Our state
-    bool show_demo_window = false;
-    bool show_another_window = false;
-//    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-    ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.0f, 1.00f);
+    Uint64 prev = SDL_GetPerformanceCounter(); // used for fps limit
 
+    Uint8 sim = 0; // sim is running actively or not
+
+    int initialized = 0;
+
+    int ts_done = 0;
+    Body* simulation_result[100000];
+    int last_ren = 0;
+    int last_done = 0;
+
+    Body* bodies = (Body*)malloc(N*sizeof(Body));
     
-    Body bodies[5];
-    
-    for(int i=0;i<5;i++){
-        float test[2];
-        test[0] = 0.0+100.0*cos(i*2*PI/5);
-        test[1] = 0.0+100.0*sin(i*2*PI/5);
-        bodies[i].pos = (Vec2){test[0], test[1]};
-        bodies[i].v = (Vec2){0.0, 0.0};
-        bodies[i].mass = 1000.0;
+    for(int i=0;i<N;i++) {
+        Body buf;
+        buf.pos = (Vec2){0.0,0.0};
+        buf.mass = 1.0;
+        buf.v = (Vec2){0.0, 0.0};
+        bodies[i] = buf;
     }
 
+    simulation_result[0] = bodies;
 
+    int flag = 1;
 
-    Uint64 prev = SDL_GetPerformanceCounter();
-
-    Uint8 sim = 0;
+//    Uint64 elapsed = SDL_GetPerformanceCounter();
+    double elapsed = 0.0;
 
     // Main loop
     bool done = false;
-#ifdef __EMSCRIPTEN__
-    // For an Emscripten build we are disabling file-system access, so let's not attempt to do a fopen() of the imgui.ini file.
-    // You may manually call LoadIniSettingsFromMemory() to load settings from your own storage.
-    io.IniFilename = nullptr;
-    EMSCRIPTEN_MAINLOOP_BEGIN
-#else
     while (!done)
-#endif
     {
+        // --- FPS LIMIT --- //
         Uint64 now = SDL_GetPerformanceCounter();
         double dt = (now - prev) / (double)SDL_GetPerformanceFrequency();
 
-        // printf("%f\n",dt);
-        // Poll and handle events (inputs, window resize, etc.)
-        // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
-        // - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
-        // - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
-        // Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
-        // [If using SDL_MAIN_USE_CALLBACKS: call ImGui_ImplSDL3_ProcessEvent() from your SDL_AppEvent() function]
+        elapsed += dt;
+//        printf("%f\n", elapsed);
+
+        // SDL event queue
         SDL_Event event;
         while (SDL_PollEvent(&event))
         {
@@ -161,11 +159,7 @@ int main(int, char**)
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
 
-        // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-        if (show_demo_window)
-            ImGui::ShowDemoWindow(&show_demo_window);
-
-        // 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
+        // Simulation control panel
         {
             static float f = 0.0f;
             static int counter = 0;
@@ -175,11 +169,13 @@ int main(int, char**)
             static int start_clicked = 0;
             if (ImGui::Button("Start"))
                 start_clicked++;
-            if (start_clicked & 1)
+            if (start_clicked & 1 && !sim)
             {
                 sim = 1;
-                ImGui::SameLine();
-                ImGui::Text("Simulation started!");
+                sim_worker = std::thread(init_sim, bodies, &last_done, simulation_result, &flag);
+
+//                ImGui::SameLine();
+//                ImGui::Text("Simulation started!");
             }
             ImGui::SameLine();
             static int end_clicked = 0;
@@ -187,30 +183,24 @@ int main(int, char**)
                 end_clicked++;
             if (end_clicked & 1)
             {
-                ImGui::SameLine();
-                ImGui::Text("Simulation ended!");
+                flag = 0;
+                sim = -1;
+//                ImGui::SameLine();
+//                ImGui::Text("Simulation ended!");
             }
             
             ImGui::SameLine();
-            ImGui::Text("FPS: 0");
+            ImGui::Text("%d/1000000", last_done);
 
             ImGui::SameLine();
             ImGui::Text("Avg. Frame time: 0ns");
 
             ImGui::SeparatorText("Initial conditions");
 
-//            ImGui::Text("Bodies: ");
-            //ImGui::SameLine();
             ImGui::SetNextItemWidth(140);
             static float f1 = 1.e1f;
             ImGui::InputFloat("Bodies", &f1, 0.0f, 0.0f, "%e");
-//            ImGui::SameLine(); HelpMarker(
-//                "You can input value using the scientific notation,\n"
-//                "  e.g. \"1e+8\" becomes \"100000000\".");
 
-
-//            ImGui::Text("Spawn: ");
-//            ImGui::SameLine();
             ImGui::SetNextItemWidth(140);
             static ImGuiComboFlags flags = 0;
 
@@ -233,9 +223,6 @@ int main(int, char**)
                 ImGui::EndCombo();
             }
 
-
-//            ImGui::Text("Algo: ");
-//            ImGui::SameLine();
             ImGui::SetNextItemWidth(140);
             const char* alg_items[] = { "naive", "naive parallel", "barnes-hut", "barnes-hut parallel"};
             static int alg_item_selected_idx = 0;
@@ -301,70 +288,20 @@ int main(int, char**)
             ImGui::End();
         }
 
-        // 3. Show another simple window.
-        if (show_another_window)
-        {
-            ImGui::Begin("Another Window", &show_another_window);   // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
-            ImGui::Text("Hello from another window!");
-            if (ImGui::Button("Close Me"))
-                show_another_window = false;
-            ImGui::End();
-        }
-
         // Rendering
         ImGui::Render();
         SDL_SetRenderScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
         SDL_SetRenderDrawColorFloat(renderer, clear_color.x, clear_color.y, clear_color.z, clear_color.w);
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
-        
-        
-        constexpr float G = 10000.0;
+    
+        if(sim)
+            render_points(renderer, simulation_result, &last_ren, &last_done);
 
-        if (sim)
-        {
-            for(int i=0;i<5;i++) {
-                // F = ma
-                // a = m/F
-                // F = G m1 m2 / r^2
-                
-                Vec2 acc = {0.0,0.0};
-
-                for(int j=0;j<5;j++) {
-                    if (i!=j){
-                        double dx,dy,dist;
-                        dx = bodies[j].pos.x-bodies[i].pos.x;
-                        dy = bodies[j].pos.y-bodies[i].pos.y;
-                        dist = sqrt(dx*dx+dy*dy);
-                        if (dist > 1e-9) {
-                            double invDist3 = 1.0 / (dist * dist * dist);
-                            // Acceleration contribution: G * m_j * (r_ij) / |r_ij|^3
-                            acc.x += G * bodies[j].mass * dx * invDist3;
-                            acc.y += G * bodies[j].mass * dy * invDist3;
-                            //printf("%f %f\n", acc.x, acc.y);
-                        }
-                    }
-                }
-
-                Vec2 v1 = {bodies[i].v.x+acc.x*dt,bodies[i].v.y+acc.y*dt};
-                bodies[i].pos = {bodies[i].pos.x+v1.x*dt,bodies[i].pos.y+v1.y*dt};
-            }
-        }
-        
-        SDL_FPoint pts[5];
-        // if atomic flag, fetch Body bodies[n] from memory, n.pos -> SDL_Point pts[n] .x/.y, then SDL_SetRenderDrawColor to white, and SDL_RenderDrawPoints(renderer, pts, n);
-        for(int i=0;i<5;i++){
-            pts[i].x = bodies[i].pos.x+WIDTH/2;
-            pts[i].y = bodies[i].pos.y+HEIGTH/2;
-        }
-
-        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255); /* white points */
-        SDL_RenderPoints(renderer, pts, 5);
-        
         SDL_RenderPresent(renderer);
 
+        //-----LIMIT FPS TO 60-----//
         prev = now;
-
         if (dt < 1.0 / 60.0) {
             SDL_Delay((Uint32)((1.0 / 60.0 - dt) * 1000.0));
         }
@@ -374,6 +311,11 @@ int main(int, char**)
 #endif
 
     // Cleanup
+    free(bodies);
+    if (sim_worker.joinable()) {
+        sim_worker.join();
+    }
+
     // [If using SDL_MAIN_USE_CALLBACKS: all code below would likely be your SDL_AppQuit() function]
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();

@@ -1,12 +1,15 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-add_executable(nbody main.cpp bh_sim_utils.h)
+find_package(OpenMP)
+
+add_executable(nbody main.cpp bh_sim_utils.c)
 
 target_link_libraries(
     nbody
     PRIVATE
     SDL3::SDL3
     imgui
+    OpenMP::OpenMP_CXX
 )
 
 add_custom_command(TARGET nbody POST_BUILD
