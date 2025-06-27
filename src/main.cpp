@@ -201,9 +201,6 @@ int main(int, char**)
 
         // Simulation control panel
         {
-            static float f = 0.0f;  // ?
-            static int counter = 0; // ?
-
             ImGui::Begin("Simulation controls");
             
             if (ImGui::Button("Start") && !flag)
@@ -261,6 +258,10 @@ int main(int, char**)
             }
 
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+            if (ImGui::Button("Exit") && !flag)
+            {
+                done = true;
+            }
             ImGui::End();
         }
 
