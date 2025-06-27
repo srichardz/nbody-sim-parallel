@@ -5,7 +5,7 @@
 #include "time.h"
 #include <stdio.h>
 
-void init_sim(Body* bodies, int* N, int* last_done, Body* simulation_result[10000], int* flag, Node* root) {
+void init_sim(Body* bodies, int* N, int* last_done, Body** simulation_result, int* flag, Node* root, double dt, int alg) {
 
     for(int i=0;i<(*N);i++) {
         double u1 = rand() / ((double)RAND_MAX);
@@ -27,38 +27,29 @@ void init_sim(Body* bodies, int* N, int* last_done, Body* simulation_result[1000
 
         bodies[i].mass = 1.0;
     }
-//    bodies[0].pos = (Vec2){-50.0,0.0};
-//    bodies[1].pos = (Vec2){50.0,0.0};
 
-//    bodies[0].v = (Vec2){0.0,sqrt(200.0)/2};
-//    bodies[1].v = (Vec2){0.0,-1*sqrt(200.0)/2};
-//    //disable printf("%f\n", sqrt(pow(bodies[1].v.x-bodies[0].v.x, 2)+pow(bodies[1].v.y-bodies[0].v.y, 2)));
-
-//    bodies[0].mass = 1000000.0;
-//    bodies[1].mass = 1000000.0;
-    
     // large center point mass
     // bodies[0].pos.x = 0.0;
     // bodies[0].pos.y = 0.0;
     // bodies[0].v.x = 0.0;
     // bodies[0].v.y = 0.0;
-    // bodies[0].mass = 2.0;
+    // bodies[0].mass = 20000.0;
 
-    simulate(bodies, N, dt, last_done, simulation_result, flag, root);
+    simulate(bodies, N, dt, last_done, simulation_result, flag, root, alg);
 }
 
-void simulate(Body* bodies, int* N, double dt, int* last_done, Body* simulation_result[10000], int* flag, Node* root) {
+void simulate(Body* bodies, int* N, double dt, int* last_done, Body** simulation_result, int* flag, Node* root, int alg) {
     
     double elapsed = 0.0;
 
     while(*flag)
     {
-
-        // brute_force_update(bodies, N);
         
-        barnes_hut_update(bodies, root, N);
-
-        // barnes-hut end
+        if(alg==0) {
+            brute_force_update(bodies, N, dt);
+        } else if(alg==1) {
+            barnes_hut_update(bodies, root, N, dt);
+        }
 
         // saving timestep to render
         elapsed += dt;
@@ -72,17 +63,17 @@ void simulate(Body* bodies, int* N, double dt, int* last_done, Body* simulation_
 
 // Integrator schemes for brute force update
 void symplectic_euler(Body* obj, const Vec2* acc, const double dt) {
-    // v(t_i+1) = v(t_i)+a(t_i)*dt
     // x(t_i+1) = x(t_i)+v(t_i)*dt
-    obj->v = (Vec2){obj->v.x+acc->x*dt,obj->v.y+acc->y*dt};
+    // v(t_i+1) = v(t_i)+a(t_i)*dt
     obj->pos = (Vec2){obj->pos.x+obj->v.x*dt,obj->pos.y+obj->v.y*dt};
+    obj->v = (Vec2){obj->v.x+acc->x*dt,obj->v.y+acc->y*dt};
 }
 
 void explicit_euler(Body* obj, const Vec2* acc, const double dt) {
     // v(t_i+1) = v(t_i)+a(t_i)*dt
-    // x(t_i+1) = x(t_i)+v(t_i)*dt
-    obj->pos = (Vec2){obj->pos.x+obj->v.x*dt,obj->pos.y+obj->v.y*dt};
+    // x(t_i+1) = x(t_i)+v(t_i+1)*dt
     obj->v = (Vec2){obj->v.x+acc->x*dt,obj->v.y+acc->y*dt};
+    obj->pos = (Vec2){obj->pos.x+obj->v.x*dt,obj->pos.y+obj->v.y*dt};
 }
 
 void runge_kutta_4(Body* obj, const Vec2* acc, const double dt) {}
@@ -90,7 +81,7 @@ void runge_kutta_4(Body* obj, const Vec2* acc, const double dt) {}
 void leapfrog(Body* obj, const Vec2* acc, const double dt) {}
 
 // O(n^2) brute force update scheme
-void brute_force_update(Body* bodies, int* N) {
+void brute_force_update(Body* bodies, int* N, double dt) {
 
     for(int i=0;i<(*N);i++) {
         Vec2 acc = {0.0,0.0};
@@ -118,13 +109,14 @@ void brute_force_update(Body* bodies, int* N) {
 };
 
 // O(nlogn) barnes_hut optimization
-void barnes_hut_update(Body* bodies, Node* root, int* N) {
+void barnes_hut_update(Body* bodies, Node* root, int* N, double dt) {
     Quadtree qt;
     construct_tree(bodies, root, N, &qt);
     update_masses(&qt.nodes[0]);
     for(int i=0;i<(*N);i++) {
         Vec2 acc = (Vec2){0.0,0.0};
         force_calc(&qt.nodes[0], &bodies[i], &acc);
+        //printf("%f\n", dt);
         symplectic_euler(&bodies[i], &acc, dt);
     }
 
@@ -170,7 +162,6 @@ void insert_body(Body* body, Node* root, Quadtree* qt) {
             buf.r = root->r/2;
             buf.mass = 0.0;
 
-//            printf("%d\n", qt->index);
             if (qt->index >= qt->size) {
                 fprintf(stderr, "Quadtree overflow\n");
                 exit(1);
@@ -188,9 +179,10 @@ void insert_body(Body* body, Node* root, Quadtree* qt) {
 // barnes-hut
 void construct_tree(Body* bodies, Node* root, int* N, Quadtree* qt) {
     
-    (*qt).nodes = (Node*)malloc(sizeof(Node)*(8*(*N))); // 4 times N should be a safe limit
+    (*qt).nodes = (Node*)malloc(sizeof(Node)*(8*(*N))); // 8 times N should be a safe limit
     (*qt).index = 0;
     (*qt).size = 8*(*N);
+
     // init root of quadtree
     root->center = (Vec2){0.0,0.0};
     root->obj = NULL;
@@ -208,13 +200,11 @@ void construct_tree(Body* bodies, Node* root, int* N, Quadtree* qt) {
     root->mass = 0.0;
     for(int i=0;i<4;i++){ root->children[i]=NULL; }
     root->center_of_mass = (Vec2){0.0, 0.0};
+
     // loop through all bodies
-    //disable printf("Starting update loop\n");
     for(int i=0;i<(*N);i++){
         insert_body(&bodies[i], root, qt);
     }
-    //disable printf("Finished update loop\n");
-
 };
 
 // marked
@@ -275,8 +265,3 @@ void force_calc(Node* root, Body* body, Vec2* acc) {
         }
     }
 }
-
-//clock_t start = clock();
-//clock_t end = clock();
-//float seconds = (float)(end - start) / CLOCKS_PER_SEC;
-////disable printf("%f seconds\n", seconds);

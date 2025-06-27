@@ -11,7 +11,6 @@ static const int WIDTH = 1280;
 static const int HEIGTH = 720;
 static int ZOOM = 250;
 static const int FPS = 60;
-static const double dt = 0.00001;
 
 // math
 
@@ -51,17 +50,17 @@ typedef struct {
 #ifdef __cplusplus
 extern "C" {
 #endif
-    void init_sim(Body* bodies, int* N, int* ts_done, Body* simulation_result[10000], int* flag, Node* root);
-    void simulate(Body* bodies, int* N, double dt, int* last_done, Body* simulation_result[10000], int* flag, Node* root);
+    void init_sim(Body* bodies, int* N, int* ts_done, Body** simulation_result, int* flag, Node* root, double dt, int alg);
+    void simulate(Body* bodies, int* N, double dt, int* last_done, Body** simulation_result, int* flag, Node* root, int alg);
     // O(n^2) update scheme
-    void brute_force_update(Body* bodies, int* N);
+    void brute_force_update(Body* bodies, int* N, double dt);
     // integrators
     void symplectic_euler(Body* obj, const Vec2* acc, const double dt);
     void explicit_euler(Body* obj, const Vec2* acc, const double dt);
     void runge_kutta_4(Body* obj, const Vec2* acc, const double dt);    // not implemented yet
     void leapfrog(Body* obj, const Vec2* acc, const double dt);         // not implemented yet
 
-    void barnes_hut_update(Body* bodies, Node* root, int* N);
+    void barnes_hut_update(Body* bodies, Node* root, int* N, double dt);
     void construct_tree(Body* bodies, Node* root, int* N, Quadtree* qt);
     void update_masses(Node* root);
     void force_calc(Node* root, Body* body, Vec2* acc);

@@ -41,14 +41,14 @@ void recursive_bh_draw(Node* root, SDL_Renderer* renderer) {
     }
 }
 
-void render_points(SDL_Renderer* renderer, Body* simulation_result[10000], int* N, int* last_ren, int* last_done, Node* root, bool* squares) {
+void render_points(SDL_Renderer* renderer, Body** simulation_result, int* N, int* last_ren, int* last_done, Node* root, bool* squares) {
 
-    printf("%d %d \n", *last_done/60, *last_ren/60);
+    //printf("%d %d \n", *last_done/60, *last_ren/60);
     if(*last_done > *last_ren) {
         (*last_ren)++;
     }
 
-    if (squares) {
+    if (*squares) {
         recursive_bh_draw(root, renderer);
         // SDL_RenderRects did not improve things
     }
@@ -63,11 +63,11 @@ void render_points(SDL_Renderer* renderer, Body* simulation_result[10000], int* 
         pts[i].y = (ZOOM*bodies_copy[i].pos.y)+HEIGTH/2;
     }
 
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255); /* white points */
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
     SDL_RenderPoints(renderer, pts, (*N));
 }
 
-void init_sim_thread(Body* bodies, Body* simulation_result[10000], int* N, int* last_ren, int* last_done, int* flag, Node* root) {
+void init_sim_thread(Body* bodies, Body** simulation_result, int* N, int* last_ren, int* last_done, int* flag, Node* root, double dt, int alg) {
 
     bodies = (Body*)malloc((*N)*sizeof(Body));
 
@@ -86,7 +86,7 @@ void init_sim_thread(Body* bodies, Body* simulation_result[10000], int* N, int* 
 
     *flag = 1;
 
-    sim_worker = std::thread(init_sim, bodies, N, last_done, simulation_result, flag, root);
+    sim_worker = std::thread(init_sim, bodies, N, last_done, simulation_result, flag, root, dt, alg);
 };
 
 // Main code
@@ -147,15 +147,11 @@ int main(int, char**)
 
     Uint8 sim = 0; // sim is running actively or not
 
-    int initialized = 0; // ?
-
-    int ts_done = 0; // ?
-
-    
     // initialization
-    Body* simulation_result[100000];
+    Body** simulation_result = (Body**)malloc(10000000 * sizeof(Body*));
     Body* bodies;
     int N;
+    double sim_dt;
     int last_ren;
     int last_done;
     int flag = 0;
@@ -163,11 +159,12 @@ int main(int, char**)
 
     bool squares = false;
 
-//    Uint64 elapsed = SDL_GetPerformanceCounter();
     double elapsed = 0.0;
     double total_elapsed = 0.0;
 
     static int slider_n = 5;
+    static int dt_gui = 5;
+    static int alg_item_selected_idx = 0;
 
     // Main loop
     bool done = false;
@@ -178,7 +175,6 @@ int main(int, char**)
         double dt = (now - prev) / (double)SDL_GetPerformanceFrequency();
 
         elapsed += dt;
-//        printf("%f\n", elapsed);
 
         // SDL event queue
         SDL_Event event;
@@ -212,7 +208,7 @@ int main(int, char**)
             
             if (ImGui::Button("Start") && !flag)
             {
-                init_sim_thread(bodies, simulation_result, &N, &last_ren, &last_done, &flag, &root);
+                init_sim_thread(bodies, simulation_result, &N, &last_ren, &last_done, &flag, &root, sim_dt, alg_item_selected_idx);
             }
             ImGui::SameLine();
             if (ImGui::Button("End") && flag)
@@ -228,11 +224,6 @@ int main(int, char**)
 
             ImGui::SeparatorText("Initial conditions");
 
-//            ImGui::SetNextItemWidth(140);
-//            static float f1 = 1.e1f;
-//            ImGui::InputFloat("Bodies", &f1, 0.0f, 0.0f, "%e");
-
-
             static bool check_lim = true;
 
             static ImGuiSliderFlags sflags = ImGuiSliderFlags_Logarithmic & ~ImGuiSliderFlags_WrapAround;
@@ -247,31 +238,11 @@ int main(int, char**)
             ImGui::SliderInt("Zoom", &slider_z, 0, 500, "%d", zflags);
             ZOOM = slider_z;
 
-//            ImGui::SetNextItemWidth(140);
-//            static ImGuiComboFlags flags = 0;
+            ImGui::SliderInt("dt", &dt_gui, 0, 8, "1e-%d", zflags);
 
-//            const char* spawn_items[] = { "ellipse", "circle" };
-//            static int spawn_item_selected_idx = 0;
-
-//            const char* spawn_combo_preview_value = spawn_items[spawn_item_selected_idx];
-//            if (ImGui::BeginCombo("Spawn function", spawn_combo_preview_value, flags))
-//            {
-//                for (int n = 0; n < IM_ARRAYSIZE(spawn_items); n++)
-//                {
-//                    const bool is_selected = (spawn_item_selected_idx == n);
-//                    if (ImGui::Selectable(spawn_items[n], is_selected))
-//                        spawn_item_selected_idx = n;
-//
-//                    // Set the initial focus when opening the combo (scrolling + keyboard navigation focus)
-//                    if (is_selected)
-//                        ImGui::SetItemDefaultFocus();
-//                }
-//                ImGui::EndCombo();
-//            }
-//
             ImGui::SetNextItemWidth(140);
-            const char* alg_items[] = { "naive", "barnes-hut", "barnes-hut parallel"};
-            static int alg_item_selected_idx = 0;
+            const char* alg_items[] = { "naive", "barnes-hut" };
+
 
             const char* alg_combo_preview_value = alg_items[alg_item_selected_idx];
             if (ImGui::BeginCombo("Algorithm", alg_combo_preview_value, 0))//flags))
@@ -289,48 +260,7 @@ int main(int, char**)
                 ImGui::EndCombo();
             }
 
-//            ImGui::SeparatorText("Hardware");
-//
-//            ImGui::SetNextItemWidth(140);
-//            const char* hw_items[] = { "local", "remote" };
-//            static int hw_item_selected_idx = 0;
-//
-//            const char* hw_combo_preview_value = hw_items[hw_item_selected_idx];
-//            if (ImGui::BeginCombo("Simulation hardware", hw_combo_preview_value, flags))
-//            {
-//                for (int n = 0; n < IM_ARRAYSIZE(hw_items); n++)
-//                {
-//                    const bool is_selected = (hw_item_selected_idx == n);
-//                    if (ImGui::Selectable(hw_items[n], is_selected))
-//                        hw_item_selected_idx = n;
-//
-//                    if (is_selected)
-//                        ImGui::SetItemDefaultFocus();
-//                }
-//                ImGui::EndCombo();
-//            }
-//
-//
-//            static int save_init_clicked = 0;
-//            if (ImGui::Button("Save initial"))
-//                save_init_clicked++;
-//            if (save_init_clicked & 1)
-//            {
-//                ImGui::SameLine();
-//                ImGui::Text("Ph");
-//            }
-//            
-//            ImGui::SameLine();
-//
-//            static int open_res_clicked = 0;
-//            if (ImGui::Button("Open result"))
-//                open_res_clicked++;
-//            if (open_res_clicked & 1)
-//            {
-//                ImGui::SameLine();
-//                ImGui::Text("Ph");
-//            }
-
+            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             ImGui::End();
         }
 
@@ -349,6 +279,7 @@ int main(int, char**)
                 sim_worker.join();
             }
             N = slider_n;
+            sim_dt = pow(10.0f, -dt_gui);
         }
 
         SDL_RenderPresent(renderer);
@@ -365,6 +296,7 @@ int main(int, char**)
 
     // Cleanup
     free(bodies);
+    free(simulation_result);
     //free(simulation_result);
     if (sim_worker.joinable()) {
         sim_worker.join();
